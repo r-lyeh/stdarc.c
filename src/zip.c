@@ -24,18 +24,18 @@ zip* zip_open(const char *file, const char *mode /*r,w,a*/);
 
     // only for (r)ead mode
     unsigned int zip_find(zip*, const char *entryname); // convert entry to index. returns <0 if not found.
-    unsigned zip_count(zip*);
-        char*    zip_name(zip*, unsigned index);
-        char*    zip_modt(zip*, unsigned index);
-        unsigned zip_size(zip*, unsigned index);
-        unsigned zip_hash(zip*, unsigned index);
-        bool     zip_file(zip*, unsigned index); // is_file? (dir if name ends with '/'; file otherwise)
-        bool     zip_test(zip*, unsigned index);
-        unsigned zip_codec(zip*, unsigned index);
-        unsigned zip_offset(zip*, unsigned index);
-        void*    zip_extract(zip*, unsigned index); // must free() after use
-        bool     zip_extract_file(zip*, unsigned index, FILE *out);
-        unsigned zip_extract_data(zip*, unsigned index, void *out, unsigned outlen);
+    unsigned int zip_count(zip*);
+        char*        zip_name(zip*, unsigned int index);
+        char*        zip_modt(zip*, unsigned int index);
+        unsigned int zip_size(zip*, unsigned int index);
+        unsigned int zip_hash(zip*, unsigned int index);
+        bool         zip_file(zip*, unsigned int index); // is_file? (dir if name ends with '/'; file otherwise)
+        bool         zip_test(zip*, unsigned int index);
+        unsigned int zip_codec(zip*, unsigned int index);
+        unsigned int zip_offset(zip*, unsigned int index);
+        void*        zip_extract(zip*, unsigned int index); // must free() after use
+        bool         zip_extract_file(zip*, unsigned int index, FILE *out);
+        unsigned int zip_extract_data(zip*, unsigned int index, void *out, unsigned int outlen);
 
 void zip_close(zip*);
 

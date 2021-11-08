@@ -10,10 +10,10 @@ dir *dir_open(const char *filename, const char *mode); // recursive 'r'
 
     int dir_find(dir*, const char *entryname); // returns entry number; or <0 if not found.
     unsigned dir_count(dir*);
-        char*    dir_name(dir*, unsigned index);
-        unsigned dir_size(dir*, unsigned index);
-        unsigned dir_file(dir*, unsigned index); // dir_isfile? bool?
-        void*    dir_read(dir*, unsigned index); // must free() after use
+        char*        dir_name(dir*, unsigned int index);
+        unsigned int dir_size(dir*, unsigned int index);
+        unsigned int dir_file(dir*, unsigned int index); // dir_isfile? bool?
+        void*        dir_read(dir*, unsigned int index); // must free() after use
 
 void dir_close(dir*);
 
@@ -132,7 +132,7 @@ dir *dir_open(const char *pathfile, const char *mode) {
 }
 
 int dir_find(dir *d, const char *entryname) {
-    int i;
+    unsigned i;
     for( i = d->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
         if( 0 == strcmp(entryname, d->entry[i].filename)) return i;
     }
@@ -143,15 +143,15 @@ unsigned dir_count(dir *d) {
     return d ? d->count : 0;
 }
 
-char* dir_name(dir *d, unsigned index) {
+char* dir_name(dir *d, unsigned int index) {
     return d && index < d->count ? d->entry[index].filename : 0;
 }
 
-unsigned dir_size(dir *d, unsigned index) {
+unsigned int dir_size(dir *d, unsigned int index) {
     return d && index < d->count ? (unsigned)d->entry[index].size : 0;
 }
 
-unsigned dir_file(dir *d, unsigned index) {
+unsigned int dir_file(dir *d, unsigned int index) {
     return d && index < d->count ? (unsigned)!d->entry[index].is_dir : 0;
 }
 
@@ -173,7 +173,7 @@ void *dir_read(dir *d, unsigned index) {
 
 void dir_close(dir *d) {
     {
-        int i;
+        unsigned i;
         for( i = 0; i < d->count; ++i ) {
             REALLOC(d->entry[i].filename, 0);
         }

@@ -25,15 +25,15 @@ pak* pak_open(const char *fname, const char *mode /*a,r,w*/);
 
     // (w)rite or (a)ppend modes only
     int pak_append_file(pak*, const char *filename, FILE *in);
-    int pak_append_data(pak*, const char *filename, const void *in, unsigned inlen);
+    int pak_append_data(pak*, const char *filename, const void *in, unsigned int inlen);
     
     // (r)ead only mode
     int pak_find(pak*,const char *fname); // return <0 if error; index otherwise.
-    unsigned pak_count(pak*);
-        unsigned pak_size(pak*,unsigned index);
-        unsigned pak_offset(pak*, unsigned index);
-        char *pak_name(pak*,unsigned index);
-        void *pak_extract(pak*, unsigned index); // must free() after use
+    unsigned int pak_count(pak*);
+        unsigned int pak_size(pak*,unsigned int index);
+        unsigned int pak_offset(pak*, unsigned int index);
+        char *pak_name(pak*,unsigned int index);
+        void *pak_extract(pak*, unsigned int index); // must free() after use
 
 void pak_close(pak*);
 
@@ -95,7 +95,7 @@ typedef struct pak {
     FILE *in, *out;
     int dummy;
     pak_file *entries;
-    unsigned count;
+    unsigned int count;
 } pak;
 
 pak *pak_open(const char *fname, const char *mode) {
@@ -189,7 +189,7 @@ fail:;
     return NULL;
 }
 
-int pak_append_data(pak *p, const char *filename, const void *in, unsigned inlen) {
+int pak_append_data(pak *p, const char *filename, const void *in, unsigned int inlen) {
     if(!p->out) return ERR(0, "read-only pak file");
 
     // index meta
@@ -277,7 +277,7 @@ void pak_close(pak *p) {
 int pak_find(pak *p, const char *filename) {
     if( p->in ) {
         {
-            int i;
+            unsigned i;
             for( i = p->count; --i >= 0; ) {
                 if(!strcmp(p->entries[i].name, filename)) return i;
             }
@@ -286,7 +286,7 @@ int pak_find(pak *p, const char *filename) {
     return -1;
 }
 
-unsigned pak_count(pak *p) {
+unsigned int pak_count(pak *p) {
     return p->in ? p->count : 0;
 }
 
