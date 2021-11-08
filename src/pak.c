@@ -17,6 +17,8 @@
 #ifndef PAK_H
 #define PAK_H
 
+#include <stdio.h>
+
 typedef struct pak pak;
 
 pak* pak_open(const char *fname, const char *mode /*a,r,w*/);
@@ -45,6 +47,7 @@ void pak_close(pak*);
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #ifndef REALLOC
 #define REALLOC realloc
@@ -135,10 +138,13 @@ pak *pak_open(const char *fname, const char *mode) {
             goto fail;
         }
 
-        for( unsigned i = 0; i < num_files; ++i ) {
-            pak_file *e = &p->entries[i];
-            e->offset = ltoh32(e->offset);
-            e->size = ltoh32(e->size);
+        {
+            unsigned i;
+            for( i = 0; i < num_files; ++i ) {
+                pak_file *e = &p->entries[i];
+                e->offset = ltoh32(e->offset);
+                e->size = ltoh32(e->size);
+            }
         }
 
         if( mode[0] == 'a' ) {
@@ -226,17 +232,20 @@ void pak_close(pak *p) {
     if(p->out) {
         // write toc
         uint32_t seek = 0 + 12, dirpos = (uint32_t)ftell(p->out), dirlen = p->count * 64;
-        for(unsigned i = 0; i < p->count; ++i) {
-            pak_file *e = &p->entries[i];
-            // write name (truncated if needed), and trailing zeros
-            char zero[56] = {0};
-            int namelen = strlen(e->name);
-            fwrite( e->name, 1, namelen >= 56 ? 55 : namelen, p->out );
-            fwrite( zero, 1, namelen >= 56 ? 1 : 56 - namelen, p->out );
-            // write offset + length pair
-            uint32_t pseek = htol32(seek);    fwrite( &pseek, 1,4, p->out );
-            uint32_t psize = htol32(e->size); fwrite( &psize, 1,4, p->out );
-            seek += e->size;
+        {
+            unsigned i;
+            for( i = 0; i < p->count; ++i ) {
+                pak_file *e = &p->entries[i];
+                // write name (truncated if needed), and trailing zeros
+                char zero[56] = {0};
+                int namelen = strlen(e->name);
+                fwrite( e->name, 1, namelen >= 56 ? 55 : namelen, p->out );
+                fwrite( zero, 1, namelen >= 56 ? 1 : 56 - namelen, p->out );
+                // write offset + length pair
+                uint32_t pseek = htol32(seek);    fwrite( &pseek, 1,4, p->out );
+                uint32_t psize = htol32(e->size); fwrite( &psize, 1,4, p->out );
+                seek += e->size;
+            }
         }
 
         // patch header
@@ -251,8 +260,11 @@ void pak_close(pak *p) {
     if(p->out) fclose(p->out);
 
     // clean up
-    for(unsigned i = 0; i < p->count; ++i) {
-        pak_file *e = &p->entries[i];
+    {
+        unsigned i;
+        for( i = 0; i < p->count; ++i ) {
+            pak_file *e = &p->entries[i];
+        }
     }
     REALLOC(p->entries, 0);
 
@@ -264,8 +276,11 @@ void pak_close(pak *p) {
 
 int pak_find(pak *p, const char *filename) {
     if( p->in ) {
-        for( int i = p->count; --i >= 0; ) {
-            if(!strcmp(p->entries[i].name, filename)) return i;
+        {
+            int i;
+            for( i = p->count; --i >= 0; ) {
+                if(!strcmp(p->entries[i].name, filename)) return i;
+            }
         }
     }
     return -1;
@@ -328,14 +343,17 @@ int main(int argc, char **argv) {
     printf("listing %s archive ...\n", fname);
     p = pak_open(fname, "rb");
     if( p ) {
-        for( unsigned i = 0; i < pak_count(p); ++i ) {
-            printf("  %d) @%08x %11u %s ", i+1, pak_offset(p,i), pak_size(p,i), pak_name(p,i));
-            void *data = pak_extract(p,i);
-            printf("\r%c\n", data ? 'Y':'N');
-            if(argc > 2 && data) 
-                if(i == pak_find(p,argv[2]))
-                    printf("%.*s\n", (int)pak_size(p,i), (char*)data);
-            free(data);
+        {
+            unsigned i;
+            for( i = 0; i < pak_count(p); ++i ) {
+                printf("  %d) @%08x %11u %s ", i+1, pak_offset(p,i), pak_size(p,i), pak_name(p,i));
+                void *data = pak_extract(p,i);
+                printf("\r%c\n", data ? 'Y':'N');
+                if(argc > 2 && data)
+                    if(i == pak_find(p,argv[2]))
+                        printf("%.*s\n", (int)pak_size(p,i), (char*)data);
+                free(data);
+            }
         }
         pak_close(p);
     }

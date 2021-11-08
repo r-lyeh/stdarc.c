@@ -1,0 +1,9 @@
+#ifndef stdarc_c_CONFIG_H
+#define stdarc_c_CONFIG_H
+
+#define stdarc_c_VERSION_MAJOR @stdarc_c_VERSION_MAJOR@
+#define stdarc_c_VERSION_MINOR @stdarc_c_VERSION_MINOR@
+#define stdarc_c_VERSION_PATCH @stdarc_c_VERSION_PATCH@
+#define stdarc_c_VERSION "@stdarc_c_VERSION@"
+
+#endif /* stdarc_c_CONFIG_H */

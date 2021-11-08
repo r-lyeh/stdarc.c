@@ -8,7 +8,8 @@ int main(int argc, char **argv) {
     printf("list contents of %s ...\n", fname);
     tar *t = tar_open(fname, "rb");
     if( t ) {
-        for( unsigned i = 0 ; i < tar_count(t); ++i ) {
+        unsigned i;
+        for( i = 0 ; i < tar_count(t); ++i ) {
             printf("  %d) @%08x %11u %s ", i+1, tar_offset(t,i), tar_size(t,i), tar_name(t,i));
             void *data = tar_extract(t,i);
             printf("\r%c\n", data ? 'Y':'N'); // use data here: "%.*s\n",tar_size(t,i),(char*)data

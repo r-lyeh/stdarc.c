@@ -4,7 +4,7 @@
 // - note: vfs_mount() order matters (the most recent the higher priority).
 
 void  vfs_mount(const char *path); // zipfile or directory/with/trailing/slash/
-char* vfs_load(const char *filename, int *size); // must free() after use
+char* vfs_load(const char *filename, unsigned int *size); // must free() after use
 
 // -----------------------------------------------------------------------------
 
@@ -55,15 +55,16 @@ void vfs_mount(const char *path) {
     dir_head->is_directory = is_directory;
 }
 
-char *vfs_load(const char *filename, int *size) { // must free() after use
+char *vfs_load(const char *filename, unsigned int *size) { // must free() after use
     char *data = NULL;
-    for(vfs_dir *dir = dir_head; dir && !data; dir = dir->next) {
+    vfs_dir *dir;
+    for( dir = dir_head; dir && !data; dir = dir->next ) {
         if( dir->is_directory ) {
             char buf[512];
             snprintf(buf, sizeof(buf), "%s%s", dir->path, filename);
             data = vfs_read_file(buf, size);
         } else {
-            int index = zip_find(dir->archive, filename);
+            unsigned int index = zip_find(dir->archive, filename);
             data = zip_extract(dir->archive, index);
             if( size ) *size = zip_size(dir->archive, index);
         }

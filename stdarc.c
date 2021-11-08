@@ -40,7 +40,7 @@ zip* zip_open(const char *file, const char *mode /*r,w,a*/);
     bool zip_append_file(zip*, const char *entryname, FILE *in, unsigned compr_level);
 
     // only for (r)ead mode
-    int zip_find(zip*, const char *entryname); // convert entry to index. returns <0 if not found.
+    unsigned int zip_find(zip*, const char *entryname); // convert entry to index. returns <0 if not found.
     unsigned zip_count(zip*);
         char*    zip_name(zip*, unsigned index);
         char*    zip_modt(zip*, unsigned index);
@@ -202,7 +202,7 @@ int jzReadEndRecord(FILE *fp, JZEndRecord *endRecord) {
     }
 
     // Naively assume signature can only be found in one place...
-    for(i = readBytes - sizeof(JZEndRecord); i >= 0; i--) {
+    for( i = readBytes - sizeof(JZEndRecord); i >= 0; i-- ) {
         er = (JZEndRecord *)(jzBuffer + i);
         if(er->signature == 0x06054B50)
             break;
@@ -241,84 +241,92 @@ int jzReadCentralDirectory(FILE *fp, JZEndRecord *endRecord, JZRecordCallback ca
         return ERR(JZ_ERRNO, "Cannot seek in zip file!");
     }
 
-    for(int i=0; i<endRecord->numEntries; i++) {
-        PRINTF("%d)\n@-> %lu %#lx\n", i+1, (unsigned long)ftell(fp), (unsigned long)ftell(fp));
-        long offset = ftell(fp); // store current position
+    {
+        uint16_t i;
+        for (i = 0; i < endRecord->numEntries; i++) {
+            PRINTF("%d)\n@-> %lu %#lx\n", i + 1, (unsigned long) ftell(fp), (unsigned long) ftell(fp));
+            long offset = ftell(fp); // store current position
 
-        if(fread(&fileHeader, 1, sizeof(JZGlobalFileHeader), fp) < sizeof(JZGlobalFileHeader)) {
-            return ERR(JZ_ERRNO, "Couldn't read file header #%d!", i);
+            if (fread(&fileHeader, 1, sizeof(JZGlobalFileHeader), fp) < sizeof(JZGlobalFileHeader)) {
+                return ERR(JZ_ERRNO, "Couldn't read file header #%d!", i);
+            }
+
+            JZGlobalFileHeader *g = &fileHeader, copy = *g;
+            PRINTF("\tsignature: %u %#x\n", g->signature, g->signature); // 0x02014B50
+            PRINTF("\tversionMadeBy: %u %#x\n", g->versionMadeBy, g->versionMadeBy); // unsupported
+            PRINTF("\tversionNeededToExtract: %u %#x\n", g->versionNeededToExtract,
+                   g->versionNeededToExtract); // unsupported
+            PRINTF("\tgeneralPurposeBitFlag: %u %#x\n", g->generalPurposeBitFlag,
+                   g->generalPurposeBitFlag); // unsupported
+            PRINTF("\tcompressionMethod: %u %#x\n", g->compressionMethod, g->compressionMethod); // 0-store,8-deflate
+            PRINTF("\tlastModFileTime: %u %#x\n", g->lastModFileTime, g->lastModFileTime);
+            PRINTF("\tlastModFileDate: %u %#x\n", g->lastModFileDate, g->lastModFileDate);
+            PRINTF("\tcrc32: %#x\n", g->crc32);
+            PRINTF("\tcompressedSize: %u\n", g->compressedSize);
+            PRINTF("\tuncompressedSize: %u\n", g->uncompressedSize);
+            PRINTF("\tfileNameLength: %u\n", g->fileNameLength);
+            PRINTF("\textraFieldLength: %u\n", g->extraFieldLength); // unsupported
+            PRINTF("\tfileCommentLength: %u\n", g->fileCommentLength); // unsupported
+            PRINTF("\tdiskNumberStart: %u\n", g->diskNumberStart); // unsupported
+            PRINTF("\tinternalFileAttributes: %#x\n", g->internalFileAttributes); // unsupported
+            PRINTF("\texternalFileAttributes: %#x\n", g->externalFileAttributes); // unsupported
+            PRINTF("\trelativeOffsetOflocalHeader: %u %#x\n", g->relativeOffsetOflocalHeader,
+                   g->relativeOffsetOflocalHeader);
+
+            if (fileHeader.signature != 0x02014B50) {
+                return ERR(JZ_ERRNO, "Invalid file header signature %#x #%d!", fileHeader.signature, i);
+            }
+
+            if (fileHeader.fileNameLength + 1 >= JZ_BUFFER_SIZE) {
+                return ERR(JZ_ERRNO, "Too long file name %u #%d!", fileHeader.fileNameLength, i);
+            }
+
+            // filename
+            char jzFilename[JZ_BUFFER_SIZE / 3];
+            if (fread(jzFilename, 1, fileHeader.fileNameLength, fp) < fileHeader.fileNameLength) {
+                return ERR(JZ_ERRNO, "Couldn't read filename #%d!", i);
+            }
+            jzFilename[fileHeader.fileNameLength] = '\0'; // NULL terminate
+
+            // extra block
+            unsigned char jzExtra[JZ_BUFFER_SIZE / 3];
+            if (fread(jzExtra, 1, fileHeader.extraFieldLength, fp) < fileHeader.extraFieldLength) {
+                return ERR(JZ_ERRNO, "Couldn't read extra block #%d!", i);
+            }
+
+            // comment block
+            char jzComment[JZ_BUFFER_SIZE / 3];
+            if (fread(jzComment, 1, fileHeader.fileCommentLength, fp) < fileHeader.fileCommentLength) {
+                return ERR(JZ_ERRNO, "Couldn't read comment block #%d!", i);
+            }
+            jzComment[fileHeader.fileCommentLength] = '\0'; // NULL terminate
+
+            // seek to local file header, then skip file header + filename + extra field length
+            if (fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader - 2 - 2, SEEK_SET)) {
+                return ERR(JZ_ERRNO, "Cannot seek in file!");
+            }
+
+            if (fread(&fileHeader.fileNameLength, 1, 2, fp) < 2) {
+                return ERR(JZ_ERRNO, "Couldn't read local filename #%d!", i);
+            }
+            if (fread(&fileHeader.extraFieldLength, 1, 2, fp) < 2) {
+                return ERR(JZ_ERRNO, "Couldn't read local extrafield #%d!", i);
+            }
+            if (fseek(fp,
+                      fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader + fileHeader.fileNameLength +
+                      fileHeader.extraFieldLength, SEEK_SET)) {
+                return ERR(JZ_ERRNO, "Cannot seek in file!");
+            }
+
+            PRINTF("@-> %lu %#lx\n---\n", (unsigned long) ftell(fp), (unsigned long) ftell(fp));
+
+            if (JZ_OK != callback(fp, i, &fileHeader, jzFilename, jzExtra, jzComment, user_data))
+                break; // keep going while callback returns ok
+
+            fseek(fp, offset, SEEK_SET); // return to position
+            fseek(fp, sizeof(JZGlobalFileHeader) + copy.fileNameLength, SEEK_CUR); // skip entry
+            fseek(fp, copy.extraFieldLength + copy.fileCommentLength, SEEK_CUR); // skip entry
         }
-
-        JZGlobalFileHeader *g = &fileHeader, copy = *g;
-        PRINTF("\tsignature: %u %#x\n", g->signature, g->signature); // 0x02014B50
-        PRINTF("\tversionMadeBy: %u %#x\n", g->versionMadeBy, g->versionMadeBy); // unsupported
-        PRINTF("\tversionNeededToExtract: %u %#x\n", g->versionNeededToExtract, g->versionNeededToExtract); // unsupported
-        PRINTF("\tgeneralPurposeBitFlag: %u %#x\n", g->generalPurposeBitFlag, g->generalPurposeBitFlag); // unsupported
-        PRINTF("\tcompressionMethod: %u %#x\n", g->compressionMethod, g->compressionMethod); // 0-store,8-deflate
-        PRINTF("\tlastModFileTime: %u %#x\n", g->lastModFileTime, g->lastModFileTime);
-        PRINTF("\tlastModFileDate: %u %#x\n", g->lastModFileDate, g->lastModFileDate);
-        PRINTF("\tcrc32: %#x\n", g->crc32);
-        PRINTF("\tcompressedSize: %u\n", g->compressedSize);
-        PRINTF("\tuncompressedSize: %u\n", g->uncompressedSize);
-        PRINTF("\tfileNameLength: %u\n", g->fileNameLength);
-        PRINTF("\textraFieldLength: %u\n", g->extraFieldLength); // unsupported
-        PRINTF("\tfileCommentLength: %u\n", g->fileCommentLength); // unsupported
-        PRINTF("\tdiskNumberStart: %u\n", g->diskNumberStart); // unsupported
-        PRINTF("\tinternalFileAttributes: %#x\n", g->internalFileAttributes); // unsupported
-        PRINTF("\texternalFileAttributes: %#x\n", g->externalFileAttributes); // unsupported
-        PRINTF("\trelativeOffsetOflocalHeader: %u %#x\n", g->relativeOffsetOflocalHeader, g->relativeOffsetOflocalHeader);
-
-        if(fileHeader.signature != 0x02014B50) {
-            return ERR(JZ_ERRNO, "Invalid file header signature %#x #%d!", fileHeader.signature, i);
-        }
-
-        if(fileHeader.fileNameLength + 1 >= JZ_BUFFER_SIZE) {
-            return ERR(JZ_ERRNO, "Too long file name %u #%d!", fileHeader.fileNameLength, i);
-        }
-
-        // filename
-        char jzFilename[JZ_BUFFER_SIZE/3];
-        if(fread(jzFilename, 1, fileHeader.fileNameLength, fp) < fileHeader.fileNameLength) {
-            return ERR(JZ_ERRNO, "Couldn't read filename #%d!", i);
-        }
-        jzFilename[fileHeader.fileNameLength] = '\0'; // NULL terminate
-
-        // extra block
-        unsigned char jzExtra[JZ_BUFFER_SIZE/3];
-        if(fread(jzExtra, 1, fileHeader.extraFieldLength, fp) < fileHeader.extraFieldLength) {
-            return ERR(JZ_ERRNO, "Couldn't read extra block #%d!", i);
-        }
-
-        // comment block
-        char jzComment[JZ_BUFFER_SIZE/3];
-        if(fread(jzComment, 1, fileHeader.fileCommentLength, fp) < fileHeader.fileCommentLength) {
-            return ERR(JZ_ERRNO, "Couldn't read comment block #%d!", i);
-        }
-        jzComment[fileHeader.fileCommentLength] = '\0'; // NULL terminate
-
-        // seek to local file header, then skip file header + filename + extra field length
-        if(fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader - 2 - 2, SEEK_SET)) {
-            return ERR(JZ_ERRNO, "Cannot seek in file!");
-        }
-
-        if(fread(&fileHeader.fileNameLength, 1, 2, fp) < 2) {
-            return ERR(JZ_ERRNO, "Couldn't read local filename #%d!", i);
-        }
-        if(fread(&fileHeader.extraFieldLength, 1, 2, fp) < 2) {
-            return ERR(JZ_ERRNO, "Couldn't read local extrafield #%d!", i);
-        }
-        if(fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader + fileHeader.fileNameLength + fileHeader.extraFieldLength, SEEK_SET)) {
-            return ERR(JZ_ERRNO, "Cannot seek in file!");
-        }
-
-        PRINTF("@-> %lu %#lx\n---\n", (unsigned long)ftell(fp), (unsigned long)ftell(fp));
-
-        if( JZ_OK != callback(fp, i, &fileHeader, jzFilename, jzExtra, jzComment, user_data) )
-            break; // keep going while callback returns ok
-
-        fseek(fp, offset, SEEK_SET); // return to position
-        fseek(fp, sizeof(JZGlobalFileHeader) + copy.fileNameLength, SEEK_CUR); // skip entry
-        fseek(fp, copy.extraFieldLength + copy.fileCommentLength, SEEK_CUR); // skip entry
     }
 
     return JZ_OK;
@@ -375,13 +383,20 @@ struct zip {
 uint32_t zip__crc32(uint32_t crc, const void *data, size_t n_bytes) {
     // CRC32 routine is from Björn Samuelsson's public domain implementation at http://home.thep.lu.se/~bjorn/crc/ 
     static uint32_t table[256] = {0};
-    if(!*table) for(uint32_t i = 0; i < 0x100; ++i) {
-        uint32_t r = i;
-        for(int j = 0; j < 8; ++j) r = (r & 1 ? 0 : (uint32_t)0xEDB88320L) ^ r >> 1;
-        table[i] = r ^ (uint32_t)0xFF000000L;
+    if(!*table) {
+        uint32_t i;
+        for (i = 0; i < 0x100; ++i) {
+            uint32_t r = i;
+            unsigned short j;
+            for (j = 0; j < 8; ++j) r = (r & 1 ? 0 : (uint32_t) 0xEDB88320L) ^ r >> 1;
+            table[i] = r ^ (uint32_t) 0xFF000000L;
+        }
     }
-    for(size_t i = 0; i < n_bytes; ++i) {
-        crc = table[(uint8_t)crc ^ ((uint8_t*)data)[i]] ^ crc >> 8;
+    {
+        size_t i;
+        for (i = 0; i < n_bytes; ++i) {
+            crc = table[(uint8_t) crc ^ ((uint8_t *) data)[i]] ^ crc >> 8;
+        }
     }
     return crc;
 }
@@ -408,9 +423,12 @@ int zip__callback(FILE *fp, int idx, JZGlobalFileHeader *header, char *filename,
 
 // zip read
 
-int zip_find(zip *z, const char *entryname) {
-    if( z->in ) for( int i = z->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
-        if( 0 == strcmp(entryname, z->entries[i].filename)) return i;
+unsigned int zip_find(zip *z, const char *entryname) {
+    if( z->in ) {
+        unsigned i;
+        for ( i = z->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
+            if (0 == strcmp(entryname, z->entries[i].filename)) return i;
+        }
     }
     return -1;
 }
@@ -651,13 +669,16 @@ void zip_close(zip* z) {
         end.numEntries = z->count;
         end.centralDirectoryOffset = ftell(z->out);
         // flush global directory: global file+filename each
-        for(unsigned i = 0; i < z->count; i++) {
-            struct zip_entry *h = &z->entries[i];
-            JZGlobalFileHeader *g = &h->header;
-            fwrite(g, 1, sizeof(JZGlobalFileHeader), z->out);
-            fwrite(h->filename, 1, g->fileNameLength, z->out);
-            fwrite(h->extra, 1, g->extraFieldLength, z->out);
-            fwrite(h->comment, 1, g->fileCommentLength, z->out);
+        {
+            unsigned i;
+            for (i = 0; i < z->count; i++) {
+                struct zip_entry *h = &z->entries[i];
+                JZGlobalFileHeader *g = &h->header;
+                fwrite(g, 1, sizeof(JZGlobalFileHeader), z->out);
+                fwrite(h->filename, 1, g->fileNameLength, z->out);
+                fwrite(h->extra, 1, g->extraFieldLength, z->out);
+                fwrite(h->comment, 1, g->fileCommentLength, z->out);
+            }
         }
         end.centralDirectorySize = ftell(z->out) - end.centralDirectoryOffset;
         end.zipCommentLength = 0;
@@ -668,10 +689,13 @@ void zip_close(zip* z) {
     if( z->out ) fclose(z->out);
     if( z->in ) fclose(z->in);
     // clean up
-    for(unsigned i = 0; i < z->count; ++i ) {
-        REALLOC(z->entries[i].filename, 0);
-        if(z->entries[i].extra)   REALLOC(z->entries[i].extra, 0);
-        if(z->entries[i].comment) REALLOC(z->entries[i].comment, 0);
+    {
+        unsigned i;
+        for (i = 0; i < z->count; ++i) {
+            REALLOC(z->entries[i].filename, 0);
+            if (z->entries[i].extra) REALLOC(z->entries[i].extra, 0);
+            if (z->entries[i].comment) REALLOC(z->entries[i].comment, 0);
+        }
     }
     if(z->entries) REALLOC(z->entries, 0);
     zip zero = {0}; *z = zero; REALLOC(z, 0);
@@ -690,7 +714,7 @@ typedef struct tar tar;
 
 tar *tar_open(const char *filename, const char *mode);
 
-    int tar_find(tar*, const char *entryname); // returns entry number; or <0 if not found.
+    unsigned int tar_find(tar*, const char *entryname); // returns entry number; or <0 if not found.
     unsigned tar_count(tar*);
         char*    tar_name(tar*, unsigned index);
         unsigned tar_size(tar*, unsigned index);
@@ -823,9 +847,12 @@ tar *tar_open(const char *filename, const char *mode) {
     return t;
 }
 
-int tar_find(tar *t, const char *entryname) {
-    if( t->in ) for( int i = t->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
-        if( 0 == strcmp(entryname, t->entries[i].filename)) return i;
+unsigned int tar_find(tar *t, const char *entryname) {
+    if( t->in ) {
+        unsigned i;
+        for ( i = t->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
+            if (0 == strcmp(entryname, t->entries[i].filename)) return i;
+        }
     }
     return -1;
 }
@@ -859,12 +886,17 @@ void *tar_extract(tar *t, unsigned index) {
 
 void tar_close(tar *t) {
     fclose(t->in);
-    for( int i = 0; i < t->count; ++i) {
-        REALLOC(t->entries[i].filename, 0);
+    {
+        unsigned i;
+        for ( i = 0; i < t->count; ++i ) {
+            REALLOC(t->entries[i].filename, 0);
+        }
     }
-    tar zero = {0};
-    *t = zero;
-    REALLOC(t, 0);
+    {
+        tar zero = {0};
+        *t = zero;
+        REALLOC(t, 0);
+    }
 }
 
 #ifdef TAR_DEMO
@@ -872,7 +904,8 @@ int main( int argc, char **argv ) {
     if(argc <= 1) exit(printf("%s file.tar [file_to_view]\n", argv[0]));
     tar *t = tar_open(argv[1], "rb");
     if( t ) {
-        for( int i = 0; i < tar_count(t); ++i ) {
+        unsigned i;
+        for( i = 0; i < tar_count(t); ++i ) {
             printf("%d) %s (%u bytes)\n", i+1, tar_name(t,i), tar_size(t,i));
             char *data = tar_extract(t,i);
             if(argc>2) if(0==strcmp(argv[2],tar_name(t,i))) printf("%.*s\n", tar_size(t,i), data);
@@ -1023,10 +1056,13 @@ pak *pak_open(const char *fname, const char *mode) {
             goto fail;
         }
 
-        for( unsigned i = 0; i < num_files; ++i ) {
-            pak_file *e = &p->entries[i];
-            e->offset = ltoh32(e->offset);
-            e->size = ltoh32(e->size);
+        {
+            unsigned i;
+            for ( i = 0; i < num_files; ++i ) {
+                pak_file *e = &p->entries[i];
+                e->offset = ltoh32(e->offset);
+                e->size = ltoh32(e->size);
+            }
         }
 
         if( mode[0] == 'a' ) {
@@ -1114,17 +1150,22 @@ void pak_close(pak *p) {
     if(p->out) {
         // write toc
         uint32_t seek = 0 + 12, dirpos = (uint32_t)ftell(p->out), dirlen = p->count * 64;
-        for(unsigned i = 0; i < p->count; ++i) {
-            pak_file *e = &p->entries[i];
-            // write name (truncated if needed), and trailing zeros
-            char zero[56] = {0};
-            int namelen = strlen(e->name);
-            fwrite( e->name, 1, namelen >= 56 ? 55 : namelen, p->out );
-            fwrite( zero, 1, namelen >= 56 ? 1 : 56 - namelen, p->out );
-            // write offset + length pair
-            uint32_t pseek = htol32(seek);    fwrite( &pseek, 1,4, p->out );
-            uint32_t psize = htol32(e->size); fwrite( &psize, 1,4, p->out );
-            seek += e->size;
+        {
+            unsigned i;
+            for ( i = 0; i < p->count; ++i ) {
+                pak_file *e = &p->entries[i];
+                // write name (truncated if needed), and trailing zeros
+                char zero[56] = {0};
+                int namelen = strlen(e->name);
+                fwrite(e->name, 1, namelen >= 56 ? 55 : namelen, p->out);
+                fwrite(zero, 1, namelen >= 56 ? 1 : 56 - namelen, p->out);
+                // write offset + length pair
+                uint32_t pseek = htol32(seek);
+                fwrite(&pseek, 1, 4, p->out);
+                uint32_t psize = htol32(e->size);
+                fwrite(&psize, 1, 4, p->out);
+                seek += e->size;
+            }
         }
 
         // patch header
@@ -1139,8 +1180,11 @@ void pak_close(pak *p) {
     if(p->out) fclose(p->out);
 
     // clean up
-    for(unsigned i = 0; i < p->count; ++i) {
-        pak_file *e = &p->entries[i];
+    {
+        unsigned i;
+        for ( i = 0; i < p->count; ++i ) {
+            pak_file *e = &p->entries[i];
+        }
     }
     REALLOC(p->entries, 0);
 
@@ -1152,7 +1196,8 @@ void pak_close(pak *p) {
 
 int pak_find(pak *p, const char *filename) {
     if( p->in ) {
-        for( int i = p->count; --i >= 0; ) {
+        unsigned i;
+        for( i = p->count; --i >= 0; ) {
             if(!strcmp(p->entries[i].name, filename)) return i;
         }
     }
@@ -1216,7 +1261,8 @@ int main(int argc, char **argv) {
     printf("listing %s archive ...\n", fname);
     p = pak_open(fname, "rb");
     if( p ) {
-        for( unsigned i = 0; i < pak_count(p); ++i ) {
+        unsigned i;
+        for( i = 0; i < pak_count(p); ++i ) {
             printf("  %d) @%08x %11u %s ", i+1, pak_offset(p,i), pak_size(p,i), pak_name(p,i));
             void *data = pak_extract(p,i);
             printf("\r%c\n", data ? 'Y':'N');
@@ -1240,7 +1286,7 @@ int main(int argc, char **argv) {
 // - note: vfs_mount() order matters (the most recent the higher priority).
 
 void  vfs_mount(const char *path); // zipfile or directory/with/trailing/slash/
-char* vfs_load(const char *filename, int *size); // must free() after use
+char* vfs_load(const char *filename, unsigned int *size); // must free() after use
 
 // -----------------------------------------------------------------------------
 
@@ -1291,15 +1337,16 @@ void vfs_mount(const char *path) {
     dir_head->is_directory = is_directory;
 }
 
-char *vfs_load(const char *filename, int *size) { // must free() after use
+char *vfs_load(const char *filename, unsigned int *size) { // must free() after use
     char *data = NULL;
-    for(vfs_dir *dir = dir_head; dir && !data; dir = dir->next) {
+    vfs_dir *dir;
+    for( dir = dir_head; dir && !data; dir = dir->next ) {
         if( dir->is_directory ) {
             char buf[512];
             snprintf(buf, sizeof(buf), "%s%s", dir->path, filename);
             data = vfs_read_file(buf, size);
         } else {
-            int index = zip_find(dir->archive, filename);
+            unsigned int index = zip_find(dir->archive, filename);
             data = zip_extract(dir->archive, index);
             if( size ) *size = zip_size(dir->archive, index);
         }
@@ -1394,22 +1441,28 @@ int dir_yield(dir *d, const char *pathfile, char *name, int namelen) {
 #ifdef _WIN32
     WIN32_FIND_DATAA fdata = { 0 };
     snprintf(name, namelen, "%s/*", pathfile);
-    for( HANDLE h = FindFirstFileA(name, &fdata ); h != INVALID_HANDLE_VALUE; (ok = FindClose( h ), h = INVALID_HANDLE_VALUE, 1)) {
-        for( int next = 1; next; next = FindNextFileA(h, &fdata) != 0 ) {
-            if( fdata.cFileName[0] == '.' ) continue;
-            int is_dir = (fdata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0;
-            snprintf(name, namelen, "%s/%s%s", pathfile, fdata.cFileName, is_dir ? "/" : "");
-            struct stat st; if( !is_dir ) if(stat(name, &st) < 0) continue;
-            // add
-            dir_entry de = { STRDUP(name), is_dir ? 0 : st.st_size, is_dir };
-            d->entry = (dir_entry*)REALLOC(d->entry, ++d->count * sizeof(dir_entry));
-            d->entry[d->count-1] = de;
+    {
+        HANDLE h;
+        for( h = FindFirstFileA(name, &fdata ); h != INVALID_HANDLE_VALUE; (ok = FindClose( h ), h = INVALID_HANDLE_VALUE, 1) ) {
+            int next;
+            for( next = 1; next; next = FindNextFileA(h, &fdata) != 0 ) {
+                if( fdata.cFileName[0] == '.' ) continue;
+                int is_dir = (fdata.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) > 0;
+                snprintf(name, namelen, "%s/%s%s", pathfile, fdata.cFileName, is_dir ? "/" : "");
+                struct stat st; if( !is_dir ) if(stat(name, &st) < 0) continue;
+                // add
+                dir_entry de = { STRDUP(name), is_dir ? 0 : st.st_size, is_dir };
+                d->entry = (dir_entry*)REALLOC(d->entry, ++d->count * sizeof(dir_entry));
+                d->entry[d->count-1] = de;
+            }
         }
     }
 #else
     snprintf(name, namelen, "%s/", pathfile);
-    for( DIR *dir = opendir(name); dir; ok = (closedir(dir), dir = 0, 1)) {
-        for( struct dirent *ep; ep = readdir(dir); ) {
+    DIR *dir;
+    for( dir = opendir(name); dir; ok = (closedir(dir), dir = 0, 1) ) {
+        struct dirent *ep;
+        while( (ep = readdir(dir)) ) {
             if( ep->d_name[0] == '.' ) continue;
             snprintf(name, namelen, "%s/%s", pathfile, ep->d_name);
             struct stat st; if( stat(name, &st) < 0 ) continue;
@@ -1430,10 +1483,16 @@ dir *dir_open(const char *pathfile, const char *mode) {
     dir *d = (dir*)REALLOC(0, sizeof(dir)), zero = {0}; *d = zero;
 
     char *clean = STRDUP( pathfile );
-    for( int i = 0; clean[i]; ++i ) if(clean[i] == '\\') clean[i] = '/';
-    for( int len = strlen(clean); clean[--len] == '/'; ) clean[len] = '\0';
-
     char buffer[2048];
+    {
+        int i;
+        for (i = 0; clean[i]; ++i) if (clean[i] == '\\') clean[i] = '/';
+    }
+    {
+        size_t len;
+        for (len = strlen(clean); clean[--len] == '/';) clean[len] = '\0';
+    }
+
     dir_yield(d, clean, buffer, 2048);
 
     REALLOC(clean, 0);
@@ -1441,7 +1500,8 @@ dir *dir_open(const char *pathfile, const char *mode) {
 }
 
 int dir_find(dir *d, const char *entryname) {
-    for( int i = d->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
+    int i;
+    for( i = d->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
         if( 0 == strcmp(entryname, d->entry[i].filename)) return i;
     }
     return -1;
@@ -1466,7 +1526,8 @@ unsigned dir_file(dir *d, unsigned index) {
 void *dir_read(dir *d, unsigned index) {
     if( d && index < d->count ) {
         void *data = 0;
-        for( FILE *fp = fopen(d->entry[index].filename, "rb"); fp; fclose(fp), fp = 0) {
+        FILE *fp;
+        for( fp = fopen(d->entry[index].filename, "rb"); fp; fclose(fp), fp = 0 ) {
             size_t len = d->entry[index].size;
             data = REALLOC(0, len);
             if( data && fread(data, 1, len, fp) != len ) {
@@ -1479,7 +1540,8 @@ void *dir_read(dir *d, unsigned index) {
 }
 
 void dir_close(dir *d) {
-    for( int i = 0; i < d->count; ++i) {
+    int i;
+    for( i = 0; i < d->count; ++i ) {
         REALLOC(d->entry[i].filename, 0);
     }
     dir zero = {0};
@@ -1491,7 +1553,8 @@ void dir_close(dir *d) {
 int main( int argc, char **argv ) {
     dir *d = dir_open(argc > 1 ? argv[1] : "./", "rb");
     if( d ) {
-        for( int i = 0; i < dir_count(d); ++i ) {
+        int i;
+        for( i = 0; i < dir_count(d); ++i ) {
             if( dir_file(d,i) )
             printf("%3d) %11d %s\n", i + 1, dir_size(d,i), dir_name(d,i));
             else

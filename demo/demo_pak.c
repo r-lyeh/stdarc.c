@@ -10,7 +10,8 @@ int main(int argc, char **argv) {
     pak *z = pak_open("demo.pak", "a+b");
     if( z ) {
         const char *fname = __FILE__;
-        for( FILE *fp = fopen(fname, "rb"); fp; fclose(fp), fp = 0) {
+        FILE *fp;
+        for( fp = fopen(fname, "rb"); fp; fclose(fp), fp = 0 ) {
             pak_append_file(z, fname, fp);
         }
         pak_close(z);
@@ -21,7 +22,8 @@ int main(int argc, char **argv) {
     printf("testing files in %s ...\n", fname);
     z = pak_open(fname, "rb");
     if( z ) {
-        for( unsigned i = 0 ; i < pak_count(z); ++i ) {
+        unsigned i;
+        for( i = 0 ; i < pak_count(z); ++i ) {
             printf("  %d) ", i+1);
             printf("@%08x ", pak_offset(z,i));
             printf("%11u ", pak_size(z,i));
