@@ -7,7 +7,6 @@
 // - see zip_put.c for more info.
 //
 //@todo: +w) int zip_append(zip*, const char *entryname, const void *buf, unsigned buflen);
-//@todo: +w) int zip_append_mem(zip*, const char *entryname, const void *buf, unsigned buflen, unsigned compr_level);
 
 #ifndef ZIP_H
 #define ZIP_H
@@ -20,6 +19,7 @@ zip* zip_open(const char *file, const char *mode /*r,w,a*/);
 
     // only for (w)rite or (a)ppend mode
     bool zip_append_file(zip*, const char *entryname, FILE *in, unsigned compr_level);
+    bool zip_append_mem(zip*, const char *entryname, const void *buf, unsigned buflen, unsigned compress_level);
 
     // only for (r)ead mode
     int zip_find(zip*, const char *entryname); // convert entry to index. returns <0 if not found.
@@ -478,6 +478,81 @@ bool zip_test(zip *z, unsigned index) {
 }
 
 // zip append/write
+
+bool zip_append_mem(zip *z, const char *entryname, const void *buf, unsigned buflen, unsigned compress_level) {
+    if( !buf ) return ERR(false, "No buffer provided");
+    if( !entryname ) return ERR(false, "No filename provided");
+
+    uint32_t crc = zip__crc32(0, buf, buflen);
+
+    unsigned index = z->count;
+    z->entries = REALLOC(z->entries, (++z->count) * sizeof(struct zip_entry));
+    if(z->entries == NULL) return ERR(false, "Failed to allocate new entry!");
+
+    struct zip_entry *e = &z->entries[index], zero = {0};
+    *e = zero;
+    e->filename = STRDUP(entryname);
+
+    e->header.signature = 0x02014B50;
+    e->header.versionMadeBy = 10; // random stuff
+    e->header.versionNeededToExtract = 10;
+    e->header.generalPurposeBitFlag = 0;
+    e->header.lastModFileTime = JZTIME(11, 22, 33);
+    e->header.lastModFileDate = JZDATE(2023, 1, 1);
+    e->header.crc32 = crc;
+    e->header.uncompressedSize = buflen;
+    e->header.fileNameLength = (uint16_t)strlen(entryname);
+    e->header.extraFieldLength = 0;
+    e->header.fileCommentLength = 0;
+    e->header.diskNumberStart = 0;
+    e->header.internalFileAttributes = 0;
+    e->header.externalFileAttributes = 0x20; // whatever this is
+    e->header.relativeOffsetOflocalHeader = ftell(z->out);
+
+    void *comp = 0;
+
+    if(!compress_level) goto dont_compress;
+
+    // Read whole file and and use compress(). Simple but won't handle GB files well.
+    unsigned compSize = BOUNDS(e->header.uncompressedSize, compress_level);
+
+    comp = REALLOC(0, compSize);
+    if(comp == NULL) goto cant_compress;
+
+    compSize = COMPRESS(buf, (unsigned)buflen, comp, (unsigned)compSize, compress_level);
+    if(!compSize) goto cant_compress;
+    if(compSize >= (buflen * 0.98) ) goto dont_compress;
+
+    uint16_t cl = 8 | (compress_level > 10 ? compress_level << 8 : 0);
+    e->header.compressedSize = compSize;
+    e->header.compressionMethod = cl;
+    goto common;
+
+cant_compress:
+dont_compress:;
+    e->header.compressedSize = buflen;
+    e->header.compressionMethod = 0; // store method
+
+common:;
+    // write local header
+    uint32_t signature = 0x04034B50;
+    fwrite(&signature, 1, sizeof(signature), z->out);
+    fwrite(&(e->header.versionNeededToExtract), 1, sizeof_JZLocalFileHeader - sizeof(signature), z->out);
+    // write filename
+    fwrite(entryname, 1, strlen(entryname), z->out);
+
+    if(e->header.compressionMethod) {
+        // store compressed blob
+        fwrite(comp, compSize, 1, z->out);
+    } else {
+        // store uncompressed blob
+        fwrite(buf, buflen, 1, z->out);
+    }
+
+    REALLOC(comp, 0);
+
+    return true;
+}
 
 bool zip_append_file(zip *z, const char *entryname, FILE *in, unsigned compress_level) {
     if( !in ) return ERR(false, "No input file provided");
