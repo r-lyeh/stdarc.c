@@ -517,11 +517,12 @@ bool zip_append_file(zip *z, const char *entryname, FILE *in, unsigned compress_
     e->header.externalFileAttributes = 0x20; // whatever this is
     e->header.relativeOffsetOflocalHeader = ftell(z->out);
 
+    void *comp = 0, *data = 0;
+
     if(!compress_level) goto dont_compress;
 
     // Read whole file and and use compress(). Simple but won't handle GB files well.
     unsigned dataSize = e->header.uncompressedSize, compSize = BOUNDS(e->header.uncompressedSize, compress_level);
-    void *comp = 0, *data = 0;
 
     comp = REALLOC(0, compSize);
     if(comp == NULL) goto cant_compress;
