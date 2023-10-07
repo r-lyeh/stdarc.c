@@ -8,12 +8,12 @@ typedef struct tar tar;
 
 tar *tar_open(const char *filename, const char *mode);
 
-    int tar_find(tar*, const char *entryname); // returns entry number; or <0 if not found.
-    unsigned tar_count(tar*);
-        char*    tar_name(tar*, unsigned index);
-        unsigned tar_size(tar*, unsigned index);
-        unsigned tar_offset(tar*, unsigned index);
-        void*    tar_extract(tar*, unsigned index); // must free() after use
+    unsigned int tar_find(tar*, const char *entryname); // returns entry number; or <0 if not found.
+    unsigned int tar_count(tar*);
+        char*    tar_name(tar*, unsigned int index);
+        unsigned tar_size(tar*, unsigned int index);
+        unsigned tar_offset(tar*, unsigned int index);
+        void*    tar_extract(tar*, unsigned int index); // must free() after use
 
 void tar_close(tar *t);
 
@@ -42,10 +42,10 @@ void tar_close(tar *t);
 
 struct tar {
     FILE *in;
-    unsigned count;
+    unsigned int count;
     struct tar_entry {
     char *filename;
-    unsigned size;
+    unsigned int size;
     size_t offset;
     } *entries;
 };
@@ -60,9 +60,9 @@ uint64_t tar__octal( const char *src, const char *eof ) {
     return sum;
 }
 
-typedef int (*tar_callback)(const char *filename, unsigned inlen, size_t offset, void *userdata);
+typedef int (*tar_callback)(const char *filename, unsigned int inlen, size_t offset, void *userdata);
 
-int tar__push_entry(const char *filename, unsigned inlen, size_t offset, void *userdata) {
+int tar__push_entry(const char *filename, unsigned int inlen, size_t offset, void *userdata) {
     tar *t = (tar *)userdata;
 
     unsigned index = t->count;
@@ -141,14 +141,17 @@ tar *tar_open(const char *filename, const char *mode) {
     return t;
 }
 
-int tar_find(tar *t, const char *entryname) {
-    if( t->in ) for( int i = t->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
-        if( 0 == strcmp(entryname, t->entries[i].filename)) return i;
+unsigned int tar_find(tar *t, const char *entryname) {
+    if( t->in ) {
+        int i;
+        for( i = t->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
+            if( 0 == strcmp(entryname, t->entries[i].filename)) return i;
+        }
     }
     return -1;
 }
 
-unsigned tar_count(tar *t) {
+unsigned int tar_count(tar *t) {
     return t ? t->count : 0;
 }
 
@@ -156,7 +159,7 @@ char* tar_name(tar *t, unsigned index) {
     return t && index < t->count ? t->entries[index].filename : 0;
 }
 
-unsigned tar_size(tar *t, unsigned index) {
+unsigned int tar_size(tar *t, unsigned int index) {
     return t && index < t->count ? t->entries[index].size : 0;
 }
 
@@ -177,8 +180,11 @@ void *tar_extract(tar *t, unsigned index) {
 
 void tar_close(tar *t) {
     fclose(t->in);
-    for( int i = 0; i < t->count; ++i) {
-        REALLOC(t->entries[i].filename, 0);
+    {
+        unsigned i;
+        for( i = 0; i < t->count; ++i ) {
+            REALLOC(t->entries[i].filename, 0);
+        }
     }
     tar zero = {0};
     *t = zero;
@@ -190,7 +196,8 @@ int main( int argc, char **argv ) {
     if(argc <= 1) exit(printf("%s file.tar [file_to_view]\n", argv[0]));
     tar *t = tar_open(argv[1], "rb");
     if( t ) {
-        for( int i = 0; i < tar_count(t); ++i ) {
+        unsigned i;
+        for( i = 0; i < tar_count(t); ++i ) {
             printf("%d) %s (%u bytes)\n", i+1, tar_name(t,i), tar_size(t,i));
             char *data = tar_extract(t,i);
             if(argc>2) if(0==strcmp(argv[2],tar_name(t,i))) printf("%.*s\n", tar_size(t,i), data);

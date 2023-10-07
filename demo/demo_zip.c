@@ -13,7 +13,8 @@ int main(int argc, const char **argv) {
     zip *z = zip_open("demo.zip", "a+b");
     if( z ) {
         // compress with DEFLATE|6. Other compressors are also supported (try LZMA|5, ULZ|9, LZ4X|3, etc.)
-        for( FILE *myfile = fopen(__FILE__, "rb"); myfile; fclose(myfile), myfile = 0) {
+        FILE *myfile;
+        for( myfile = fopen(__FILE__, "rb"); myfile; fclose(myfile), myfile = 0 ) {
             zip_append_file(z, __FILE__, myfile, 6);
         }
         zip_close(z);
@@ -26,7 +27,8 @@ int main(int argc, const char **argv) {
     printf("testing files in %s ...\n", infile);
     z = zip_open(infile, "rb");
     if( z ) {
-        for( unsigned i = 0 ; i < zip_count(z); ++i ) {
+        unsigned i;
+        for( i = 0 ; i < zip_count(z); ++i ) {
             printf("  %d) ", i+1);
             printf("[%08X] ", zip_hash(z,i));
             printf("$%02X ", zip_codec(z,i));

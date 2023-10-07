@@ -10,6 +10,7 @@
 
 #ifndef ZIP_H
 #define ZIP_H
+
 #include <stdio.h>
 #include <stdbool.h>
 
@@ -22,19 +23,19 @@ zip* zip_open(const char *file, const char *mode /*r,w,a*/);
     bool zip_append_mem(zip*, const char *entryname, const void *buf, unsigned buflen, unsigned compress_level);
 
     // only for (r)ead mode
-    int zip_find(zip*, const char *entryname); // convert entry to index. returns <0 if not found.
-    unsigned zip_count(zip*);
-        char*    zip_name(zip*, unsigned index);
-        char*    zip_modt(zip*, unsigned index);
-        unsigned zip_size(zip*, unsigned index);
-        unsigned zip_hash(zip*, unsigned index);
-        bool     zip_file(zip*, unsigned index); // is_file? (dir if name ends with '/'; file otherwise)
-        bool     zip_test(zip*, unsigned index);
-        unsigned zip_codec(zip*, unsigned index);
-        unsigned zip_offset(zip*, unsigned index);
-        void*    zip_extract(zip*, unsigned index); // must free() after use
-        bool     zip_extract_file(zip*, unsigned index, FILE *out);
-        unsigned zip_extract_data(zip*, unsigned index, void *out, unsigned outlen);
+    unsigned int zip_find(zip*, const char *entryname); // convert entry to index. returns <0 if not found.
+    unsigned int zip_count(zip*);
+        char*        zip_name(zip*, unsigned int index);
+        char*        zip_modt(zip*, unsigned int index);
+        unsigned int zip_size(zip*, unsigned int index);
+        unsigned int zip_hash(zip*, unsigned int index);
+        bool         zip_file(zip*, unsigned int index); // is_file? (dir if name ends with '/'; file otherwise)
+        bool         zip_test(zip*, unsigned int index);
+        unsigned int zip_codec(zip*, unsigned int index);
+        unsigned int zip_offset(zip*, unsigned int index);
+        void*        zip_extract(zip*, unsigned int index); // must free() after use
+        bool         zip_extract_file(zip*, unsigned int index, FILE *out);
+        unsigned int zip_extract_data(zip*, unsigned int index, void *out, unsigned int outlen);
 
 void zip_close(zip*);
 
@@ -49,6 +50,7 @@ void zip_close(zip*);
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #ifndef REALLOC
 #define REALLOC realloc
@@ -186,7 +188,7 @@ int jzReadEndRecord(FILE *fp, JZEndRecord *endRecord) {
     }
 
     // Naively assume signature can only be found in one place...
-    for(i = readBytes - sizeof(JZEndRecord); i >= 0; i--) {
+    for( i = readBytes - sizeof(JZEndRecord); i >= 0; i-- ) {
         er = (JZEndRecord *)(jzBuffer + i);
         if(er->signature == 0x06054B50)
             break;
@@ -225,84 +227,87 @@ int jzReadCentralDirectory(FILE *fp, JZEndRecord *endRecord, JZRecordCallback ca
         return ERR(JZ_ERRNO, "Cannot seek in zip file!");
     }
 
-    for(int i=0; i<endRecord->numEntries; i++) {
-        PRINTF("%d)\n@-> %lu %#lx\n", i+1, (unsigned long)ftell(fp), (unsigned long)ftell(fp));
-        long offset = ftell(fp); // store current position
+    {
+        uint16_t i;
+        for( i=0; i<endRecord->numEntries; i++ ) {
+            PRINTF("%d)\n@-> %lu %#lx\n", i+1, (unsigned long)ftell(fp), (unsigned long)ftell(fp));
+            long offset = ftell(fp); // store current position
 
-        if(fread(&fileHeader, 1, sizeof(JZGlobalFileHeader), fp) < sizeof(JZGlobalFileHeader)) {
-            return ERR(JZ_ERRNO, "Couldn't read file header #%d!", i);
+            if(fread(&fileHeader, 1, sizeof(JZGlobalFileHeader), fp) < sizeof(JZGlobalFileHeader)) {
+                return ERR(JZ_ERRNO, "Couldn't read file header #%d!", i);
+            }
+
+            JZGlobalFileHeader *g = &fileHeader, copy = *g;
+            PRINTF("\tsignature: %u %#x\n", g->signature, g->signature); // 0x02014B50
+            PRINTF("\tversionMadeBy: %u %#x\n", g->versionMadeBy, g->versionMadeBy); // unsupported
+            PRINTF("\tversionNeededToExtract: %u %#x\n", g->versionNeededToExtract, g->versionNeededToExtract); // unsupported
+            PRINTF("\tgeneralPurposeBitFlag: %u %#x\n", g->generalPurposeBitFlag, g->generalPurposeBitFlag); // unsupported
+            PRINTF("\tcompressionMethod: %u %#x\n", g->compressionMethod, g->compressionMethod); // 0-store,8-deflate
+            PRINTF("\tlastModFileTime: %u %#x\n", g->lastModFileTime, g->lastModFileTime);
+            PRINTF("\tlastModFileDate: %u %#x\n", g->lastModFileDate, g->lastModFileDate);
+            PRINTF("\tcrc32: %#x\n", g->crc32);
+            PRINTF("\tcompressedSize: %u\n", g->compressedSize);
+            PRINTF("\tuncompressedSize: %u\n", g->uncompressedSize);
+            PRINTF("\tfileNameLength: %u\n", g->fileNameLength);
+            PRINTF("\textraFieldLength: %u\n", g->extraFieldLength); // unsupported
+            PRINTF("\tfileCommentLength: %u\n", g->fileCommentLength); // unsupported
+            PRINTF("\tdiskNumberStart: %u\n", g->diskNumberStart); // unsupported
+            PRINTF("\tinternalFileAttributes: %#x\n", g->internalFileAttributes); // unsupported
+            PRINTF("\texternalFileAttributes: %#x\n", g->externalFileAttributes); // unsupported
+            PRINTF("\trelativeOffsetOflocalHeader: %u %#x\n", g->relativeOffsetOflocalHeader, g->relativeOffsetOflocalHeader);
+
+            if(fileHeader.signature != 0x02014B50) {
+                return ERR(JZ_ERRNO, "Invalid file header signature %#x #%d!", fileHeader.signature, i);
+            }
+
+            if(fileHeader.fileNameLength + 1 >= JZ_BUFFER_SIZE) {
+                return ERR(JZ_ERRNO, "Too long file name %u #%d!", fileHeader.fileNameLength, i);
+            }
+
+            // filename
+            char jzFilename[JZ_BUFFER_SIZE/3];
+            if(fread(jzFilename, 1, fileHeader.fileNameLength, fp) < fileHeader.fileNameLength) {
+                return ERR(JZ_ERRNO, "Couldn't read filename #%d!", i);
+            }
+            jzFilename[fileHeader.fileNameLength] = '\0'; // NULL terminate
+
+            // extra block
+            unsigned char jzExtra[JZ_BUFFER_SIZE/3];
+            if(fread(jzExtra, 1, fileHeader.extraFieldLength, fp) < fileHeader.extraFieldLength) {
+                return ERR(JZ_ERRNO, "Couldn't read extra block #%d!", i);
+            }
+
+            // comment block
+            char jzComment[JZ_BUFFER_SIZE/3];
+            if(fread(jzComment, 1, fileHeader.fileCommentLength, fp) < fileHeader.fileCommentLength) {
+                return ERR(JZ_ERRNO, "Couldn't read comment block #%d!", i);
+            }
+            jzComment[fileHeader.fileCommentLength] = '\0'; // NULL terminate
+
+            // seek to local file header, then skip file header + filename + extra field length
+            if(fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader - 2 - 2, SEEK_SET)) {
+                return ERR(JZ_ERRNO, "Cannot seek in file!");
+            }
+
+            if(fread(&fileHeader.fileNameLength, 1, 2, fp) < 2) {
+                return ERR(JZ_ERRNO, "Couldn't read local filename #%d!", i);
+            }
+            if(fread(&fileHeader.extraFieldLength, 1, 2, fp) < 2) {
+                return ERR(JZ_ERRNO, "Couldn't read local extrafield #%d!", i);
+            }
+            if(fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader + fileHeader.fileNameLength + fileHeader.extraFieldLength, SEEK_SET)) {
+                return ERR(JZ_ERRNO, "Cannot seek in file!");
+            }
+
+            PRINTF("@-> %lu %#lx\n---\n", (unsigned long)ftell(fp), (unsigned long)ftell(fp));
+
+            if( JZ_OK != callback(fp, i, &fileHeader, jzFilename, jzExtra, jzComment, user_data) )
+                break; // keep going while callback returns ok
+
+            fseek(fp, offset, SEEK_SET); // return to position
+            fseek(fp, sizeof(JZGlobalFileHeader) + copy.fileNameLength, SEEK_CUR); // skip entry
+            fseek(fp, copy.extraFieldLength + copy.fileCommentLength, SEEK_CUR); // skip entry
         }
-
-        JZGlobalFileHeader *g = &fileHeader, copy = *g;
-        PRINTF("\tsignature: %u %#x\n", g->signature, g->signature); // 0x02014B50
-        PRINTF("\tversionMadeBy: %u %#x\n", g->versionMadeBy, g->versionMadeBy); // unsupported
-        PRINTF("\tversionNeededToExtract: %u %#x\n", g->versionNeededToExtract, g->versionNeededToExtract); // unsupported
-        PRINTF("\tgeneralPurposeBitFlag: %u %#x\n", g->generalPurposeBitFlag, g->generalPurposeBitFlag); // unsupported
-        PRINTF("\tcompressionMethod: %u %#x\n", g->compressionMethod, g->compressionMethod); // 0-store,8-deflate
-        PRINTF("\tlastModFileTime: %u %#x\n", g->lastModFileTime, g->lastModFileTime);
-        PRINTF("\tlastModFileDate: %u %#x\n", g->lastModFileDate, g->lastModFileDate);
-        PRINTF("\tcrc32: %#x\n", g->crc32);
-        PRINTF("\tcompressedSize: %u\n", g->compressedSize);
-        PRINTF("\tuncompressedSize: %u\n", g->uncompressedSize);
-        PRINTF("\tfileNameLength: %u\n", g->fileNameLength);
-        PRINTF("\textraFieldLength: %u\n", g->extraFieldLength); // unsupported
-        PRINTF("\tfileCommentLength: %u\n", g->fileCommentLength); // unsupported
-        PRINTF("\tdiskNumberStart: %u\n", g->diskNumberStart); // unsupported
-        PRINTF("\tinternalFileAttributes: %#x\n", g->internalFileAttributes); // unsupported
-        PRINTF("\texternalFileAttributes: %#x\n", g->externalFileAttributes); // unsupported
-        PRINTF("\trelativeOffsetOflocalHeader: %u %#x\n", g->relativeOffsetOflocalHeader, g->relativeOffsetOflocalHeader);
-
-        if(fileHeader.signature != 0x02014B50) {
-            return ERR(JZ_ERRNO, "Invalid file header signature %#x #%d!", fileHeader.signature, i);
-        }
-
-        if(fileHeader.fileNameLength + 1 >= JZ_BUFFER_SIZE) {
-            return ERR(JZ_ERRNO, "Too long file name %u #%d!", fileHeader.fileNameLength, i);
-        }
-
-        // filename
-        char jzFilename[JZ_BUFFER_SIZE/3];
-        if(fread(jzFilename, 1, fileHeader.fileNameLength, fp) < fileHeader.fileNameLength) {
-            return ERR(JZ_ERRNO, "Couldn't read filename #%d!", i);
-        }
-        jzFilename[fileHeader.fileNameLength] = '\0'; // NULL terminate
-
-        // extra block
-        unsigned char jzExtra[JZ_BUFFER_SIZE/3];
-        if(fread(jzExtra, 1, fileHeader.extraFieldLength, fp) < fileHeader.extraFieldLength) {
-            return ERR(JZ_ERRNO, "Couldn't read extra block #%d!", i);
-        }
-
-        // comment block
-        char jzComment[JZ_BUFFER_SIZE/3];
-        if(fread(jzComment, 1, fileHeader.fileCommentLength, fp) < fileHeader.fileCommentLength) {
-            return ERR(JZ_ERRNO, "Couldn't read comment block #%d!", i);
-        }
-        jzComment[fileHeader.fileCommentLength] = '\0'; // NULL terminate
-
-        // seek to local file header, then skip file header + filename + extra field length
-        if(fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader - 2 - 2, SEEK_SET)) {
-            return ERR(JZ_ERRNO, "Cannot seek in file!");
-        }
-
-        if(fread(&fileHeader.fileNameLength, 1, 2, fp) < 2) {
-            return ERR(JZ_ERRNO, "Couldn't read local filename #%d!", i);
-        }
-        if(fread(&fileHeader.extraFieldLength, 1, 2, fp) < 2) {
-            return ERR(JZ_ERRNO, "Couldn't read local extrafield #%d!", i);
-        }
-        if(fseek(fp, fileHeader.relativeOffsetOflocalHeader + sizeof_JZLocalFileHeader + fileHeader.fileNameLength + fileHeader.extraFieldLength, SEEK_SET)) {
-            return ERR(JZ_ERRNO, "Cannot seek in file!");
-        }
-
-        PRINTF("@-> %lu %#lx\n---\n", (unsigned long)ftell(fp), (unsigned long)ftell(fp));
-
-        if( JZ_OK != callback(fp, i, &fileHeader, jzFilename, jzExtra, jzComment, user_data) )
-            break; // keep going while callback returns ok
-
-        fseek(fp, offset, SEEK_SET); // return to position
-        fseek(fp, sizeof(JZGlobalFileHeader) + copy.fileNameLength, SEEK_CUR); // skip entry
-        fseek(fp, copy.extraFieldLength + copy.fileCommentLength, SEEK_CUR); // skip entry
     }
 
     return JZ_OK;
@@ -359,13 +364,20 @@ struct zip {
 uint32_t zip__crc32(uint32_t crc, const void *data, size_t n_bytes) {
     // CRC32 routine is from Björn Samuelsson's public domain implementation at http://home.thep.lu.se/~bjorn/crc/ 
     static uint32_t table[256] = {0};
-    if(!*table) for(uint32_t i = 0; i < 0x100; ++i) {
-        uint32_t r = i;
-        for(int j = 0; j < 8; ++j) r = (r & 1 ? 0 : (uint32_t)0xEDB88320L) ^ r >> 1;
-        table[i] = r ^ (uint32_t)0xFF000000L;
+    if(!*table) {
+        uint32_t i;
+        for( i = 0; i < 0x100; ++i ) {
+            uint32_t r = i;
+            unsigned short j;
+            for( j = 0; j < 8; ++j )
+                r = (r & 1 ? 0 : (uint32_t)0xEDB88320L) ^ r >> 1;
+            table[i] = r ^ (uint32_t)0xFF000000L;
+        }
     }
-    for(size_t i = 0; i < n_bytes; ++i) {
-        crc = table[(uint8_t)crc ^ ((uint8_t*)data)[i]] ^ crc >> 8;
+    {
+        size_t i;
+        for( i = 0; i < n_bytes; ++i )
+            crc = table[(uint8_t)crc ^ ((uint8_t*)data)[i]] ^ crc >> 8;
     }
     return crc;
 }
@@ -392,9 +404,12 @@ int zip__callback(FILE *fp, int idx, JZGlobalFileHeader *header, char *filename,
 
 // zip read
 
-int zip_find(zip *z, const char *entryname) {
-    if( z->in ) for( int i = z->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
-        if( 0 == strcmp(entryname, z->entries[i].filename)) return i;
+unsigned int zip_find(zip *z, const char *entryname) {
+    if( z->in ) {
+        int i;
+        for( i = z->count; --i >= 0; ) { // in case of several copies, grab most recent file (last coincidence)
+            if( 0 == strcmp(entryname, z->entries[i].filename)) return i;
+        }
     }
     return -1;
 }
@@ -711,13 +726,16 @@ void zip_close(zip* z) {
         end.numEntries = z->count;
         end.centralDirectoryOffset = ftell(z->out);
         // flush global directory: global file+filename each
-        for(unsigned i = 0; i < z->count; i++) {
-            struct zip_entry *h = &z->entries[i];
-            JZGlobalFileHeader *g = &h->header;
-            fwrite(g, 1, sizeof(JZGlobalFileHeader), z->out);
-            fwrite(h->filename, 1, g->fileNameLength, z->out);
-            fwrite(h->extra, 1, g->extraFieldLength, z->out);
-            fwrite(h->comment, 1, g->fileCommentLength, z->out);
+        {
+            unsigned i;
+            for( i = 0; i < z->count; i++ ) {
+                struct zip_entry *h = &z->entries[i];
+                JZGlobalFileHeader *g = &h->header;
+                fwrite(g, 1, sizeof(JZGlobalFileHeader), z->out);
+                fwrite(h->filename, 1, g->fileNameLength, z->out);
+                fwrite(h->extra, 1, g->extraFieldLength, z->out);
+                fwrite(h->comment, 1, g->fileCommentLength, z->out);
+            }
         }
         end.centralDirectorySize = ftell(z->out) - end.centralDirectoryOffset;
         end.zipCommentLength = 0;
@@ -728,10 +746,13 @@ void zip_close(zip* z) {
     if( z->out ) fclose(z->out);
     if( z->in ) fclose(z->in);
     // clean up
-    for(unsigned i = 0; i < z->count; ++i ) {
-        REALLOC(z->entries[i].filename, 0);
-        if(z->entries[i].extra)   REALLOC(z->entries[i].extra, 0);
-        if(z->entries[i].comment) REALLOC(z->entries[i].comment, 0);
+    {
+        unsigned i;
+        for( i = 0; i < z->count; ++i ) {
+            REALLOC(z->entries[i].filename, 0);
+            if(z->entries[i].extra)   REALLOC(z->entries[i].extra, 0);
+            if(z->entries[i].comment) REALLOC(z->entries[i].comment, 0);
+        }
     }
     if(z->entries) REALLOC(z->entries, 0);
     zip zero = {0}; *z = zero; REALLOC(z, 0);
