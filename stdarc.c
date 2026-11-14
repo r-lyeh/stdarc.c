@@ -67,7 +67,9 @@ void zip_close(zip*);
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #ifndef REALLOC
 #define REALLOC realloc
