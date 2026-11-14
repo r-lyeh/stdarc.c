@@ -67,6 +67,9 @@ void zip_close(zip*);
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #ifndef REALLOC
 #define REALLOC realloc
@@ -278,6 +281,9 @@ int jzReadCentralDirectory(FILE *fp, JZEndRecord *endRecord, JZRecordCallback ca
 
         // filename
         char jzFilename[JZ_BUFFER_SIZE/3];
+        if(fileHeader.fileNameLength >= sizeof(jzFilename)) {
+            return ERR(JZ_ERRNO, "Too long file name %u #%d!", fileHeader.fileNameLength, i);
+        }
         if(fread(jzFilename, 1, fileHeader.fileNameLength, fp) < fileHeader.fileNameLength) {
             return ERR(JZ_ERRNO, "Couldn't read filename #%d!", i);
         }
@@ -285,12 +291,18 @@ int jzReadCentralDirectory(FILE *fp, JZEndRecord *endRecord, JZRecordCallback ca
 
         // extra block
         unsigned char jzExtra[JZ_BUFFER_SIZE/3];
+        if(fileHeader.extraFieldLength >= sizeof(jzExtra)) {
+            return ERR(JZ_ERRNO, "Too long extra field %u #%d!", fileHeader.extraFieldLength, i);
+        }
         if(fread(jzExtra, 1, fileHeader.extraFieldLength, fp) < fileHeader.extraFieldLength) {
             return ERR(JZ_ERRNO, "Couldn't read extra block #%d!", i);
         }
 
         // comment block
         char jzComment[JZ_BUFFER_SIZE/3];
+        if(fileHeader.fileCommentLength >= sizeof(jzComment)) {
+            return ERR(JZ_ERRNO, "Too long file comment %u #%d!", fileHeader.fileCommentLength, i);
+        }
         if(fread(jzComment, 1, fileHeader.fileCommentLength, fp) < fileHeader.fileCommentLength) {
             return ERR(JZ_ERRNO, "Couldn't read comment block #%d!", i);
         }
